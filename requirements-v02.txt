@@ -1,0 +1,6 @@
+# AutoGen 0.2 (Legacy) - Use if you prefer the stable 0.2 API
+pyautogen>=0.2.33
+openai>=1.12.0
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+requests>=2.31.0

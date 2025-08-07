@@ -1,0 +1,150 @@
+# Docker Compose for n8n + AutoGen Integration
+# Run with: docker-compose -f docker-compose.n8n-autogen.yml up
+
+version: '3.8'
+
+services:
+  # n8n workflow orchestrator
+  n8n:
+    image: n8nio/n8n
+    container_name: n8n_orchestrator
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=n8n_demo_password
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n_workflows:/home/node/.n8n/workflows:ro
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - n8n_autogen_network
+
+  # AutoGen service
+  autogen-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.autogen
+    container_name: autogen_service
+    ports:
+      - "5000:5000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=autogen_db
+      - POSTGRES_USER=autogen_user
+      - POSTGRES_PASSWORD=autogen_password
+      - FLASK_ENV=production
+    volumes:
+      - ./patterns:/app/patterns
+      - ./utils:/app/utils
+      - autogen_logs:/app/logs
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - n8n_autogen_network
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15
+    container_name: postgres_db
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=autogen_db
+      - POSTGRES_USER=autogen_user
+      - POSTGRES_PASSWORD=autogen_password
+      - POSTGRES_ROOT_PASSWORD=root_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    networks:
+      - n8n_autogen_network
+
+  # Redis for caching and state management
+  redis:
+    image: redis:7-alpine
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass redis_demo_password
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - n8n_autogen_network
+
+  # Optional: Monitoring with Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana_monitor
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=grafana_admin_password
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    restart: unless-stopped
+    networks:
+      - n8n_autogen_network
+    profiles:
+      - monitoring
+
+  # Optional: Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus_metrics
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    networks:
+      - n8n_autogen_network
+    profiles:
+      - monitoring
+
+volumes:
+  n8n_data:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  autogen_logs:
+    driver: local
+  grafana_data:
+    driver: local
+  prometheus_data:
+    driver: local
+
+networks:
+  n8n_autogen_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
